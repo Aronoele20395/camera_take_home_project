@@ -13,7 +13,9 @@ class CameraScreen extends StatefulWidget {
 class _CameraScreenState extends State<CameraScreen>
     with WidgetsBindingObserver {
   CameraController? _controller;
-  bool _permissionDenied = false;
+
+  // gestische il check dei permessi nel momento in cui viene rilevato il passaggio in bg dell'app - questo permette di verificarli ed eventualmente ricaricare la pagina se l'utente ha inizialmente negato i permessi e poi è uscito dall'app per concederli
+  bool _shouldRecheckPermission = false;
 
   @override
   void initState() {
@@ -34,28 +36,40 @@ class _CameraScreenState extends State<CameraScreen>
   // per gestire l'app messa in background o il ritorno in foreground
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_controller == null || !_controller!.value.isInitialized) return;
 
     // app in background
     if (state == AppLifecycleState.inactive) {
+      if (_controller == null || !_controller!.value.isInitialized) return;
       _controller?.dispose();
     } else if (state == AppLifecycleState.resumed) {
-      // app torna in foreground
-      _initCamera();
+      // L'utente potrebbe tornare dalle impostazioni dopo aver
+      // concesso il permesso: rileggo lo stato aggiornato
+      if (_shouldRecheckPermission) {
+        _recheckPermission();
+      } else if (_controller != null) {
+        _initCamera();
+      }
     }
   }
 
+  // Chiamato solo da initState: è l'unico punto che mostra il dialog
+  // di sistema tramite .request(). Tutti gli altri controlli usano
+  // .status per non rischiare di aprire dialog in momenti inattesi
   Future<void> _requestCameraPermission() async {
-    final status = await Permission.camera
-        .request(); // gestione dei permessi esterna al package camera: non vengono gestiti internamente, scatta un'eccezione
+    final status = await Permission.camera.request();
     if (status.isGranted) {
       await _initCamera();
-    } else if (status.isPermanentlyDenied) {
-      // l'utente ha detto "non chiedere più" -> non compare più dialog di sistema
-      await openAppSettings();
     } else {
-      // denied: mostra UI con spiegazione
-      setState(() => _permissionDenied = true);
+      setState(() => _shouldRecheckPermission = true);
+      if (status.isPermanentlyDenied) await openAppSettings();
+    }
+  }
+
+  Future<void> _recheckPermission() async {
+    final status = await Permission.camera.status;
+    if (status.isGranted) {
+      setState(() => _shouldRecheckPermission = false);
+      await _initCamera();
     }
   }
 
@@ -102,7 +116,7 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   Widget build(BuildContext context) {
-    if (_permissionDenied) {
+    if (_shouldRecheckPermission) {
       return Scaffold(
         body: Center(
           child: Column(
